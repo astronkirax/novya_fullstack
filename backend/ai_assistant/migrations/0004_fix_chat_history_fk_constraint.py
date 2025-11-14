@@ -4,6 +4,8 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
+    # run outside of a transaction to avoid cross-table ordering issues
+    atomic = False
 
     dependencies = [
         ('ai_assistant', '0003_auto_20251015_1044'),
@@ -30,36 +32,46 @@ class Migration(migrations.Migration):
             BEGIN
                 FOREACH table_name IN ARRAY tables_to_fix
                 LOOP
-                    -- Drop the old constraint if it exists (might point to users table)
-                    constraint_name := table_name || '_student_id_fkey';
-                    
-                    IF EXISTS (
-                        SELECT 1 FROM pg_constraint 
-                        WHERE conname = constraint_name
-                        AND conrelid = table_name::regclass
-                    ) THEN
-                        EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', table_name, constraint_name);
-                        RAISE NOTICE 'Dropped constraint % from table %', constraint_name, table_name;
+                    -- Only proceed if the table actually exists
+                    IF to_regclass(table_name) IS NOT NULL THEN
+                        constraint_name := table_name || '_student_id_fkey';
+
+                        -- Drop the old constraint if it exists (might point to users table)
+                        IF EXISTS (
+                            SELECT 1 FROM pg_constraint
+                            WHERE conname = constraint_name
+                            AND conrelid = table_name::regclass
+                        ) THEN
+                            EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', table_name, constraint_name);
+                            RAISE NOTICE 'Dropped constraint % on table %', constraint_name, table_name;
+                        END IF;
+
+                        -- If the referenced table student_registration exists, create FK; otherwise skip
+                        IF to_regclass('student_registration') IS NOT NULL THEN
+                            -- Create the correct foreign key constraint pointing to student_registration
+                            EXECUTE format(
+                                'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (student_id) REFERENCES student_registration(student_id) ON DELETE CASCADE',
+                                table_name,
+                                constraint_name
+                            );
+                            RAISE NOTICE 'Created constraint % on table %', constraint_name, table_name;
+                        ELSE
+                            RAISE NOTICE 'Skipped creating constraint % on table % because student_registration does not exist', constraint_name, table_name;
+                        END IF;
+                    ELSE
+                        RAISE NOTICE 'Table % does not exist, skipping', table_name;
                     END IF;
-                    
-                    -- Create the correct foreign key constraint pointing to student_registration
-                    EXECUTE format(
-                        'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (student_id) REFERENCES student_registration(student_id) ON DELETE CASCADE',
-                        table_name,
-                        constraint_name
-                    );
-                    RAISE NOTICE 'Created constraint % on table %', constraint_name, table_name;
                 END LOOP;
             END $$;
             """,
             reverse_sql="""
-            -- Reverse migration: Drop all constraints
-            ALTER TABLE ai_study_plans DROP CONSTRAINT IF EXISTS ai_study_plans_student_id_fkey;
-            ALTER TABLE ai_generated_notes DROP CONSTRAINT IF EXISTS ai_generated_notes_student_id_fkey;
-            ALTER TABLE manual_notes DROP CONSTRAINT IF EXISTS manual_notes_student_id_fkey;
-            ALTER TABLE ai_chat_history DROP CONSTRAINT IF EXISTS ai_chat_history_student_id_fkey;
-            ALTER TABLE ai_interaction_sessions DROP CONSTRAINT IF EXISTS ai_interaction_sessions_student_id_fkey;
-            ALTER TABLE ai_favorites DROP CONSTRAINT IF EXISTS ai_favorites_student_id_fkey;
+            -- Reverse migration: Drop all constraints if they exist
+            ALTER TABLE IF EXISTS ai_study_plans DROP CONSTRAINT IF EXISTS ai_study_plans_student_id_fkey;
+            ALTER TABLE IF EXISTS ai_generated_notes DROP CONSTRAINT IF EXISTS ai_generated_notes_student_id_fkey;
+            ALTER TABLE IF EXISTS manual_notes DROP CONSTRAINT IF EXISTS manual_notes_student_id_fkey;
+            ALTER TABLE IF EXISTS ai_chat_history DROP CONSTRAINT IF EXISTS ai_chat_history_student_id_fkey;
+            ALTER TABLE IF EXISTS ai_interaction_sessions DROP CONSTRAINT IF EXISTS ai_interaction_sessions_student_id_fkey;
+            ALTER TABLE IF EXISTS ai_favorites DROP CONSTRAINT IF EXISTS ai_favorites_student_id_fkey;
             """
         ),
     ]
