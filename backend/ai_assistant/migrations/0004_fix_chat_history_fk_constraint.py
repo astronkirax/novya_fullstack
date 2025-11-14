@@ -9,7 +9,8 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('ai_assistant', '0003_auto_20251015_1044'),
-        ('authentication', '0001_initial'),  # Ensure student_registration table exists
+        # Ensure the migration that creates the registration table runs first:
+        ('authentication', '0002_add_registration_models'),
     ]
 
     operations = [
@@ -43,7 +44,7 @@ class Migration(migrations.Migration):
                             AND conrelid = table_name::regclass
                         ) THEN
                             EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', table_name, constraint_name);
-                            RAISE NOTICE 'Dropped constraint % on table %', constraint_name, table_name;
+                            RAISE NOTICE 'Dropped constraint % from table %', constraint_name, table_name;
                         END IF;
 
                         -- If the referenced table student_registration exists, create FK; otherwise skip
